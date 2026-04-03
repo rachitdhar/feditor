@@ -6,6 +6,10 @@ Zero third party libraries; only using standard Windows header files.
 
 Provides clean, smooth and fast file loading and editing.
 
+<img width="1418" height="1018" alt="image" src="https://github.com/user-attachments/assets/cf6dd666-82fa-4db2-bd62-2c9aa8cc4dba" />
+
+NOTE: The fps value shown in the title is a dynamic value. It is almost zero when the editor is idle (to avoid unnecessary re-rendering), but increases whenever any activity occurs.
+
 ## Reason for making this project
 
 This editor came out of an overnight session, where I basically just
