@@ -51,6 +51,7 @@ bool g_minibufferActive = false;
 std::wstring g_minibufferText;
 std::wstring g_minibufferPrompt;
 bool g_waitingForCtrlX = false;
+UINT_PTR TEMP_MINIBUFFER_TIMER_ID = 2;
 
 float g_minibufferHeight = 20.0f;
 IDWriteTextFormat *g_minibufferFormat = nullptr;
@@ -532,6 +533,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
     // for cursor (caret) blinking
     case WM_TIMER: {
+	if (wParam == TEMP_MINIBUFFER_TIMER_ID) { // timer ID for something temporary in minibuffer
+	    KillTimer(hwnd, TEMP_MINIBUFFER_TIMER_ID);
+	    g_minibufferActive = false;
+	    return 0;
+	}
+
         g_caretVisible = !g_caretVisible;
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
@@ -607,6 +614,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             g_minibufferText.clear();
             g_waitingForCtrlX = false;
             InvalidateRect(hwnd, NULL, FALSE);
+
+	    SetTimer(hwnd, TEMP_MINIBUFFER_TIMER_ID, 500, NULL); // to show "Saved File" for half a second
             return 0;
         }
 
