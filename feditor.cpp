@@ -7,6 +7,7 @@
 #include <string>
 #include <windows.h>
 #include <windowsx.h> // for GET_X_LPARAM, GET_Y_LPARAM
+#include <tracy/Tracy.hpp>
 
 #pragma comment(lib, "kernel32")
 #pragma comment(lib, "user32")
@@ -44,7 +45,10 @@ UINT32 g_caretPos = 0; // character index
 bool g_caretVisible = true;
 float g_caretX = 0.0f;
 float g_caretY = 0.0f;
+UINT32 g_caretLine = 0;
+UINT32 g_caretColumn = 0;
 float g_caretHeight = 0.0f;
+float g_glyphAdvance = 0.0f;
 UINT_PTR CURSOR_TIMER_ID = 1;
 
 bool g_minibufferActive = false;
@@ -88,6 +92,7 @@ void GetFileNameFromPath(const std::wstring& path)
 }
 
 void UpdateFPS(HWND hwnd) {
+    ZoneScopedS(10); // for tracy profiler
     g_fps.frameCount++;
 
     LARGE_INTEGER currentTime;
@@ -262,22 +267,35 @@ bool SaveFile() {
     return result && (written == (DWORD)utf8Size);
 }
 
+void GetLineAndColumnFromCaretPos()
+{
+    UINT32 line = 0;
+    UINT32 column = 0;
+
+    for (UINT32 i = 0; i < g_caretPos && i < g_text.length(); ++i) {
+        if (g_text[i] == L'\n') {
+            line++;
+            column = 0;
+        }
+        else column++;
+    }
+
+    g_caretLine = line;
+    g_caretColumn = column;
+}
+
 void UpdateCaretPosition() {
+    ZoneScopedS(10); // for tracy profiler
     if (!g_textLayout)
         return;
 
-    DWRITE_HIT_TEST_METRICS metrics;
-    FLOAT x, y;
-
-    g_textLayout->HitTestTextPosition(g_caretPos, FALSE, &x, &y, &metrics);
-
-    g_caretX = x;
-    g_caretY = y;
-    g_caretHeight = metrics.height;
+    g_caretX = g_caretColumn * g_glyphAdvance;
+    g_caretY = g_caretLine * g_caretHeight;
 }
 
 // anytime the text changes, or window resizes, we need to rebuild the layout
 void RebuildTextLayout(float width, float height) {
+    ZoneScopedS(10); // for tracy profiler
     if (g_textLayout) {
         g_textLayout->Release();
         g_textLayout = nullptr;
@@ -312,6 +330,7 @@ void EnsureCaretVisible(HWND hwnd) {
 }
 
 void UpdateScrollBar(HWND hwnd) {
+    ZoneScopedS(10); // for tracy profiler
     RECT rc;
     GetClientRect(hwnd, &rc);
 
@@ -359,6 +378,7 @@ void CreateResources(HWND hwnd) {
 
 // to draw the text on the window
 void Render(HWND hwnd) {
+    ZoneScopedS(10); // for tracy profiler
     CreateResources(hwnd);
 
     g_rt->BeginDraw();
@@ -450,6 +470,7 @@ void Render(HWND hwnd) {
 
 void ShowCursorAndResetBlink(HWND hwnd)
 {
+    ZoneScopedS(10); // for tracy profiler
     g_caretVisible = true;
 
     // reset timer to start blinking from now
@@ -458,6 +479,7 @@ void ShowCursorAndResetBlink(HWND hwnd)
 }
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    ZoneScopedS(10); // for tracy profiler
     switch (msg) {
     case WM_CREATE: {
         SetTimer(hwnd, CURSOR_TIMER_ID, 500, nullptr);
@@ -584,6 +606,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             g_text.insert(g_caretPos, 1, ch);
             g_caretPos++;
 
+            if (ch == L'\n') {
+                g_caretLine++;
+                g_caretColumn = 0;
+            } else {
+                g_caretColumn++;
+            }
+
             RECT rc;
             GetClientRect(hwnd, &rc);
 
@@ -663,15 +692,37 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
         switch (wParam) {
         case VK_LEFT:
-            if (g_caretPos > 0)
+            if (g_caretPos > 0) {
+                if (g_caretColumn > 0) {
+                    g_caretColumn--;
+                } else {
+                    // At start of line, move to end of previous line
+                    g_caretLine--;
+                    g_caretColumn = 0;
+                    // Find length of previous line by scanning backwards
+                    UINT32 i = g_caretPos - 1; // point to the \n of previous line
+                    while (i > 0 && g_text[i - 1] != L'\n') {
+                        i--;
+                        g_caretColumn++;
+                    }
+                }
                 g_caretPos--;
+            }
             InvalidateRect(hwnd, NULL, FALSE);
             UpdateCaretPosition();
             return 0;
 
         case VK_RIGHT: {
-            if (g_caretPos < g_text.length())
+            if (g_caretPos < g_text.length()) {
+                if (g_text[g_caretPos] == L'\n') {
+                    // At newline, move to start of next line
+                    g_caretLine++;
+                    g_caretColumn = 0;
+                } else {
+                    g_caretColumn++;
+                }
                 g_caretPos++;
+            }
             InvalidateRect(hwnd, NULL, FALSE);
             UpdateCaretPosition();
             return 0;
@@ -679,8 +730,21 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
         case VK_BACK: {
             if (g_caretPos > 0) {
-                g_text.erase(g_caretPos - 1, 1);
+                if (g_caretColumn > 0) {
+                    g_caretColumn--;
+                } else {
+                    // Deleting a newline, merging with previous line
+                    g_caretLine--;
+                    g_caretColumn = 0;
+                    // Find length of previous line
+                    UINT32 i = g_caretPos - 1;
+                    while (i > 0 && g_text[i - 1] != L'\n') {
+                        i--;
+                        g_caretColumn++;
+                    }
+                }
                 g_caretPos--;
+                g_text.erase(g_caretPos, 1);
 
                 RECT rc;
                 GetClientRect(hwnd, &rc);
@@ -739,6 +803,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             g_caretPos = newPos;
         }
 
+        GetLineAndColumnFromCaretPos();
         UpdateCaretPosition();
         InvalidateRect(hwnd, nullptr, FALSE);
 
@@ -764,6 +829,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (trailing)
             g_caretPos++;
 
+        GetLineAndColumnFromCaretPos();
         UpdateCaretPosition();
 	ShowCursorAndResetBlink(hwnd);
         InvalidateRect(hwnd, nullptr, FALSE);
@@ -796,6 +862,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
+    ZoneScopedS(10); // for tracy profiler
     CoInitialize(nullptr);
 
     // initialize the fps counter
@@ -847,6 +914,25 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     g_dwFactory->CreateTextLayout(g_text.c_str(), 0, g_textFormat,
                                   (float)(rc.right - rc.left),
                                   (float)(rc.bottom - rc.top), &g_textLayout);
+
+    // pre-calculate the line height and glyph advance
+    IDWriteTextLayout* test_layout = nullptr;
+    const wchar_t* test_char = L"X";
+
+    g_dwFactory->CreateTextLayout(
+        test_char,
+        1,
+        g_textFormat,
+        (float)(rc.right - rc.left),
+        (float)(rc.bottom - rc.top),
+        &test_layout);
+
+    DWRITE_TEXT_METRICS metrics;
+    test_layout->GetMetrics(&metrics);
+
+    g_caretHeight = metrics.height;
+    g_glyphAdvance = metrics.widthIncludingTrailingWhitespace;
+    test_layout->Release();
 
     ShowWindow(hwnd, nCmdShow);
 
