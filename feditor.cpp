@@ -29,6 +29,7 @@ ID2D1HwndRenderTarget *g_rt = nullptr;
 ID2D1SolidColorBrush *g_brush = nullptr;
 ID2D1SolidColorBrush *blackBrush = nullptr;
 ID2D1SolidColorBrush *greyBrush = nullptr;
+bool is_light_theme = false;
 IDWriteFactory *g_dwFactory = nullptr;
 IDWriteTextFormat *g_textFormat = nullptr;
 IDWriteTextLayout *g_textLayout = nullptr;
@@ -383,7 +384,7 @@ void Render(HWND hwnd) {
 
     g_rt->BeginDraw();
 
-    g_rt->Clear(D2D1::ColorF(D2D1::ColorF::Black));
+    g_rt->Clear(D2D1::ColorF((is_light_theme) ? D2D1::ColorF::White : D2D1::ColorF::Black));
 
     // Apply scroll transform (affects text + caret)
     g_rt->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, -g_scrollY));
@@ -397,6 +398,8 @@ void Render(HWND hwnd) {
     int firstVisibleLine = (int)(g_scrollY / g_lineHeight);
     int lastVisibleLine = (int)((g_scrollY + editorHeight) / g_lineHeight);
 
+    ID2D1SolidColorBrush *textBrush = is_light_theme ? blackBrush : g_brush;
+
     for (int i = firstVisibleLine; i <= lastVisibleLine; i++) {
         float y = i * g_lineHeight;
 
@@ -406,7 +409,7 @@ void Render(HWND hwnd) {
             D2D1::RectF(0, y, g_gutterWidth - 5, y + g_lineHeight);
 
         g_rt->DrawTextW(number.c_str(), number.length(), g_gutterFormat,
-                        layoutRect, g_brush, D2D1_DRAW_TEXT_OPTIONS_CLIP,
+                        layoutRect, textBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP,
                         DWRITE_MEASURING_MODE_NATURAL);
     }
 
@@ -416,7 +419,7 @@ void Render(HWND hwnd) {
 
     // Draw text
     if (g_textLayout) {
-        g_rt->DrawTextLayout(D2D1::Point2F(0.0f, 0.0f), g_textLayout, g_brush);
+        g_rt->DrawTextLayout(D2D1::Point2F(0.0f, 0.0f), g_textLayout, textBrush);
     }
 
     if (g_caretVisible && g_textLayout) {
@@ -426,7 +429,7 @@ void Render(HWND hwnd) {
             D2D1_RECT_F caretRect = D2D1::RectF(
                 g_caretX, g_caretY, g_caretX + 2.0f, g_caretY + g_caretHeight);
 
-            g_rt->FillRectangle(&caretRect, g_brush);
+            g_rt->FillRectangle(&caretRect, textBrush);
         }
     }
 
@@ -672,6 +675,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             InvalidateRect(hwnd, NULL, FALSE);
             return 0;
         }
+
+	if (ctrl && wParam == 'T') { // Switch theme (C-t)
+	    is_light_theme = !is_light_theme;
+	    return 0;
+	}
 
         if (g_waitingForCtrlX && ctrl && wParam == 'F') // Find File (C-x C-f)
         {
